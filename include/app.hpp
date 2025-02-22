@@ -1,5 +1,6 @@
 #pragma once
 
+#include "commands.hpp"
 #include <ftxui/component/component.hpp>
 #include <ftxui/component/screen_interactive.hpp>
 #include <ftxui/dom/elements.hpp>
@@ -10,6 +11,14 @@ class UI {
 
   // Command Help
   std::string commandPartial;
+  std::string last = "start";
+  int lastCategory;
+  int selectedCategory = 0;
+  int lastScroll = 0;
+
+  std::vector<ftxui::Element> qCommands;
+  std::vector<ftxui::Element> qDesc;
+  std::vector<ftxui::Element> qCategories;
 
   // Quick Help
   int descIndex = 0;
@@ -30,9 +39,9 @@ public:
 
 private:
   std::vector<ftxui::Element> getsystem();
-  std::vector<ftxui::Element> renderDesc(int, int, int, int);
-  std::vector<ftxui::Element> renderCategories(int, int);
-  std::vector<ftxui::Element> renderCommands();
-
+  void renderDesc(int, int, int);
+  void renderCategories(int);
+  void renderCommands();
+  int setCategory();
 };
 } // namespace helpme
