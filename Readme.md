@@ -7,8 +7,8 @@ Initial set of quick help categories were used from https://github.com/RehanSaee
 I will add commands and refine help references as things go on. All information is stored in scoped
 variables in files:
 
-- include/categories.hpp
-- include/commands.hpp
+- include/quickhelp.hpp
+- include/commandslist.hpp
 
 Feel free to make a pull request with any correction or additions.
 
