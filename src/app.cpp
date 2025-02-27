@@ -1,13 +1,10 @@
 #include "app.hpp"
 #include "commandlist.hpp"
 #include "quickhelp.hpp"
+#include "colors.hpp"
 #include <ftxui/component/component.hpp>
-#include <ftxui/component/component_options.hpp>
-#include <ftxui/component/loop.hpp>
 #include <ftxui/component/screen_interactive.hpp>
 #include <ftxui/dom/elements.hpp>
-#include <ftxui/screen/color.hpp>
-#include <ftxui/screen/terminal.hpp>
 #include <sys/sysinfo.h>
 #include <sys/utsname.h>
 
@@ -15,202 +12,130 @@ namespace helpme {
 using namespace ftxui;
 
 UI::UI(std::string partial)
-    : screen(ftxui::ScreenInteractive::Fullscreen()), commandPartial(partial) {}
-
-void UI::run() {
-  // Create UI
-  int scroll_y = 0;
-  int swidth = 0;
-  int sheight = 0;
-  bool valid = false;
-  std::vector<Element> systeminfo = getsystem();
-
-  Element sysinfo =
-      window(color(title, text("System Info")) | bold, vflow(systeminfo)) |
-      size(HEIGHT, EQUAL, 7);
-
+    : screen(ftxui::ScreenInteractive::Fullscreen()), commandPartial(partial) {
   if (!commandList.empty()) {
     selectedCategory = setCategory();
+    descList.setCat(selectedCategory);
   }
+}
 
-  auto mainWindow =
-      Renderer({[&] {
-        swidth = screen.dimx();
-        sheight = screen.dimy();
+void UI::run() {
+  Component title = Renderer([] {
+    return text("Quick Help (ESC to Quit)") | center | bold |
+           color(colors::title) | size(HEIGHT, EQUAL, 1) | xflex;
+  });
 
-        renderDesc(scroll_y, sheight - 3, swidth - 43);
-        renderCommands();
-        renderCategories(swidth);
+  Component mainWindow =
+      Container::Vertical(
+          {title, getCategories(),
+           Container::Horizontal({Container::Vertical({
+                                      getSystem(),
+                                      getCommands(),
+                                  }),
+                                  descList.getQuickHelp(screen)})}) |
+      flex;
 
-        Element categoryList =
-            window(color(title, text("Quick Help - LEFT/RIGHT")) | bold,
-                   hflow(qCategories) | center);
-        Element descList =
-            window(color(title, text("Description - PAGEUP/PAGEDOWN")) | bold,
-                   vflow(qDesc));
-        Element cmdList = window(color(title, text("Commands")) | bold,
-                                 vbox({window(color(desc, text("Search:")),
-                                              text(commandPartial) | center),
-                                       vflow(qCommands)}));
+  mainWindow |= CatchEvent([&](Event event) {
+    if (event == Event::ArrowRight) {
+      if (selectedCategory == categories.size() - 1)
+        selectedCategory = 0;
+      else
+        selectedCategory++;
+      descList.scroll_top();
+      descList.setCat(selectedCategory);
+    } else if (event == Event::ArrowLeft) {
+      if (selectedCategory == 0)
+        selectedCategory = categories.size() - 1;
+      else
+        selectedCategory--;
+      descList.scroll_top();
+      descList.setCat(selectedCategory);
+    } else if (event == Event::PageDown) {
+      descList.scroll_down();
+    } else if (event == Event::PageUp) {
+      descList.scroll_up();
+    } else if (event == Event::Escape) {
+      screen.Exit();
+      return false;
+    } else if (event == Event::Backspace) {
+      commandPartial = commandPartial.substr(0, commandPartial.size() - 1);
+    } else {
+      std::string e = event.character();
+      if (e[0] >= 'a' && e[0] <= 'z' || e[0] >= 'A' && e[0] <= 'Z')
+        commandPartial += event.character();
+    }
+    return true;
+  });
 
-        if (!valid) {
-          screen.PostEvent(Event::Custom);
-          valid = true;
-          lastCategory = 255;
-        }
-
-        return vbox(
-            {color(desc, text("Bash Quick Help - (ESC to exit)")) | center |
-                 bold,
-             categoryList | xframe | xflex | size(HEIGHT, EQUAL, 3),
-             hbox({vbox({sysinfo, cmdList | size(WIDTH, EQUAL, 40) |
-                                      size(HEIGHT, EQUAL, cmdIndex + 5)}),
-                   descList | frame | flex}) |
-                 xframe | xflex | size(HEIGHT, EQUAL, sheight - 4)});
-      }}) |
-      CatchEvent([&](Event event) {
-        if (event == Event::ArrowRight) {
-          scroll_y = 0;
-          lastScroll = 0;
-          if (selectedCategory == categories.size() - 1)
-            selectedCategory = 0;
-          else
-            selectedCategory++;
-        } else if (event == Event::ArrowLeft) {
-          scroll_y = 0;
-          lastScroll = 0;
-          if (selectedCategory == 0)
-            selectedCategory = categories.size() - 1;
-          else
-            selectedCategory--;
-        } else if (event == Event::PageDown && descIndex >= screen.dimy() - 7) {
-          scroll_y += 1;
-        } else if (event == Event::PageUp) {
-          if (scroll_y > 0)
-            scroll_y -= 1;
-        } else if (event == Event::Escape) {
-          screen.Exit();
-          return false;
-        } else if (event == Event::Backspace) {
-          commandPartial = commandPartial.substr(0, commandPartial.size() - 1);
-        } else {
-          std::string e = event.character();
-          if (e[0] >= 'a' && e[0] <= 'z' || e[0] >= 'A' && e[0] <= 'Z')
-            commandPartial += event.character();
-        }
-        return true;
-      });
   screen.Loop(mainWindow);
 }
 
-void UI::renderDesc(int scroll_y, int height, int width) {
-  if (selectedCategory != lastCategory || scroll_y != lastScroll) {
-    qDesc.clear();
-    for (int i = scroll_y; qDesc.size() < height - 4 &&
-                           i < categories[selectedCategory].examples.size();
-         i++) {
-      char formatter = categories[selectedCategory].examples[i][0];
-
-      switch (formatter) {
-      case '#': {
-        if (categories[selectedCategory].examples[i].size() > width - 2) {
-          std::string &temp = categories[selectedCategory].examples[i];
-          int j = 0;
-          while (categories[selectedCategory].examples[i].size() - j >
-                 width - 2) {
-            for (int h = j + width - 2; h > 0; h--) {
-              if (temp[h + j] == ' ') {
-                qDesc.push_back(color(comments, text(temp.substr(1, h))));
-                j += h;
-                break;
-              }
-            }
-          }
-          qDesc.push_back(color(comments, text(temp.substr(j, temp.size()))));
-
+Component UI::getCategories() {
+  return Renderer({[&] {
+    if (selectedCategory != lastCategory) {
+      qCategories.clear();
+      int cols = (screen.dimx() - 4) / 23;
+      int mod = std::min(std::max(selectedCategory - cols / 2, 0),
+                         int(categories.size() - cols));
+      for (int i = mod; i < cols + mod; i++) {
+        if (selectedCategory == i) {
+          qCategories.push_back(
+              dbox({color(colors::selected,
+                          text(categories[i].name) | bold | center)}) |
+              size(WIDTH, EQUAL, 23));
         } else {
-          qDesc.push_back(
-              color(comments, text(categories[selectedCategory].examples[i])));
+          qCategories.push_back(dbox({text(categories[i].name) | center}) |
+                                size(WIDTH, EQUAL, 23));
         }
-        break;
       }
-      case '@':
-        qDesc.push_back(text(""));
-        qDesc.push_back(color(
-            desc, text(categories[selectedCategory].examples[i].substr(1))));
-        break;
-      case ' ':
-        qDesc.push_back(color(
-            execute, text(categories[selectedCategory].examples[i].substr(1))));
-        break;
-      case '$':
-        qDesc.push_back(text(""));
-        qDesc.push_back(
-            color(execute, text(categories[selectedCategory].examples[i])));
-        break;
-      default:
-        qDesc.push_back(
-            color(other, text(categories[selectedCategory].examples[i])));
-        break;
-      }
+      lastCategory = selectedCategory;
     }
-
-    descIndex = qDesc.size();
-    if (qDesc.size() > height - 5) {
-      qDesc.pop_back();
-      qDesc.push_back(color(selected, text("-----SCROLL-----")));
-    }
-    lastScroll = scroll_y;
-  }
+    return window(color(colors::title, text("Categories - Left/Right")),
+                  hbox(qCategories) | xflex | center | size(HEIGHT, EQUAL, 1));
+  }});
 }
 
-void UI::renderCategories(int width) {
-  if (selectedCategory != lastCategory) {
-    qCategories.clear();
-    int cols = (width - 4) / 23;
-    int mod = std::min(std::max(selectedCategory - cols / 2, 0),
-                       int(categories.size() - cols));
-    for (int i = mod; i < cols + mod; i++) {
-      if (selectedCategory == i) {
-        qCategories.push_back(
-            dbox({color(selected, text(categories[i].name) | bold | center)}) |
-            size(WIDTH, EQUAL, 23));
-      } else {
-        qCategories.push_back(dbox({text(categories[i].name) | center}) |
-                              size(WIDTH, EQUAL, 23));
+Component UI::getCommands() {
+  return Renderer({[&] {
+    if (commandPartial != last) {
+      qCommands.clear();
+      int command = 0;
+      for (int i = 0; i < commandList.size(); i++) {
+        if (commandList[i].name.find(commandPartial) != std::string::npos) {
+          command = i;
+          break;
+        }
       }
+
+      qCommands.push_back(
+          color(colors::selected, text(commandList[command].name)) | bold);
+      qCommands.push_back(
+          color(colors::desc, text(commandList[command].description)));
+      for (auto &cl : commandList[command].examples) {
+        if (cl.substr(0, 1) == "#") {
+          qCommands.push_back(color(colors::comments, text(cl)));
+        } else {
+          qCommands.push_back(color(colors::execute, text(cl)));
+        }
+      }
+      last = commandPartial;
     }
-    lastCategory = selectedCategory;
-  }
+    if (!valid) {
+      screen.PostEvent(Event::Custom);
+      valid = true;
+      lastCategory = 255;
+    }
+    return window(color(colors::title, text("Commands")),
+                  vbox({window(color(colors::desc, text("Search")),
+                               color(colors::execute, text(commandPartial))) |
+                            size(HEIGHT, EQUAL, 3) | xflex,
+                        vbox(qCommands)}) |
+                      size(WIDTH, EQUAL, 40) |
+                      size(HEIGHT, EQUAL, 3 + qCommands.size()));
+  }});
 }
 
-void UI::renderCommands() {
-  if (commandPartial != last) {
-    int command = 0;
-    qCommands.clear();
-    for (int i = 0; i < commandList.size(); i++) {
-      if (commandList[i].name.find(commandPartial) != std::string::npos) {
-        command = i;
-        break;
-      }
-    }
-
-    qCommands.push_back(color(selected, text(commandList[command].name)) |
-                        bold);
-    qCommands.push_back(color(desc, text(commandList[command].description)));
-    for (auto &cl : commandList[command].examples) {
-      if (cl.substr(0, 1) == "#") {
-        qCommands.push_back(color(comments, text(cl)));
-      } else {
-        qCommands.push_back(color(execute, text(cl)));
-      }
-    }
-    cmdIndex = qCommands.size();
-    last = commandPartial;
-  }
-}
-
-std::vector<Element> UI::getsystem() {
+Component UI::getSystem() {
   struct utsname name;
   std::vector<Element> systeminfo;
 
@@ -257,7 +182,10 @@ std::vector<Element> UI::getsystem() {
     systeminfo.push_back(text("Gateway: " + std::string(gateway)));
   }
 
-  return systeminfo;
+  return Renderer([systeminfo] {
+    return window(color(colors::title, text("System")), vbox(systeminfo)) |
+           size(WIDTH, EQUAL, 40);
+  });
 }
 
 int UI::setCategory() {
